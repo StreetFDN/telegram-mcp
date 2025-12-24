@@ -98,7 +98,6 @@ async def initialize_telegram_client() -> TelegramUserClient:
 app = Server("telegram-mcp")
 
 
-@app.tool()
 async def authenticate(
     phone_number: Optional[str] = None,
     verification_code: Optional[str] = None,
@@ -418,8 +417,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
     """Handle tool calls."""
     try:
         if name == "authenticate":
-            # The authenticate tool is now handled by @app.tool() decorator
-            # This is kept for backward compatibility
+            # Call the authenticate function directly
             phone = arguments.get("phone_number") or arguments.get("phone")
             code = arguments.get("verification_code") or arguments.get("code")
             password = arguments.get("two_factor_password") or arguments.get("password")
