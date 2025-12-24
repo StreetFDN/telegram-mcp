@@ -4,6 +4,7 @@ Provides tools for listing chats, getting messages, and sending messages.
 """
 
 import os
+import sys
 import asyncio
 import logging
 from typing import Any, Dict, Optional
@@ -28,9 +29,37 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Telegram API credentials
-API_ID = int(os.getenv('TELEGRAM_API_ID', '33109274'))
-API_HASH = os.getenv('TELEGRAM_API_HASH', '6ca27c49a99e2eb1e63ae2d2be770ba8')
+# Validate and load Telegram API credentials with proper error handling
+def get_api_credentials():
+    """Load and validate Telegram API credentials from environment variables."""
+    api_id_str = os.getenv('TELEGRAM_API_ID')
+    api_hash = os.getenv('TELEGRAM_API_HASH')
+    
+    # Check for missing environment variables
+    if not api_id_str:
+        print("❌ Environment Variable Missing: TELEGRAM_API_ID is not set")
+        print("Please set TELEGRAM_API_ID environment variable with your Telegram API ID")
+        print("Get your credentials at: https://my.telegram.org/apps")
+        sys.exit(1)
+    
+    if not api_hash:
+        print("❌ Environment Variable Missing: TELEGRAM_API_HASH is not set")
+        print("Please set TELEGRAM_API_HASH environment variable with your Telegram API Hash")
+        print("Get your credentials at: https://my.telegram.org/apps")
+        sys.exit(1)
+    
+    # Validate API ID is a valid integer
+    try:
+        api_id = int(api_id_str)
+    except ValueError:
+        print(f"❌ Invalid TELEGRAM_API_ID: '{api_id_str}' is not a valid integer")
+        print("TELEGRAM_API_ID must be a numeric value")
+        sys.exit(1)
+    
+    return api_id, api_hash
+
+# Load credentials
+API_ID, API_HASH = get_api_credentials()
 TELEGRAM_SESSION = os.getenv('TELEGRAM_SESSION', '')
 
 # Global Telegram client
