@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/node"
+    }
+  ],
+  "env": {
+    "BOT_TOKEN": "@bot_token"
+  },
+  "functions": {
+    "dist/index.js": {
+      "memory": 1024,
+      "maxDuration": 10
+    }
+  }
+}
