@@ -5,10 +5,13 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "npm run build:app && npm run build:api",
+    "build:app": "tsc",
+    "build:api": "tsc --project tsconfig.api.json",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "vercel-build": "npm run build"
   },
   "keywords": [
     "mcp",
@@ -20,6 +23,7 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
+    "@vercel/node": "^3.0.21",
     "node-telegram-bot-api": "^0.66.0",
     "zod": "^3.23.8"
   },

@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./api",
+    "rootDir": "./src/api",
+    "module": "ES2022",
+    "moduleResolution": "node"
+  },
+  "include": ["src/api/**/*"],
+  "exclude": ["node_modules", "dist", "api"]
+}
