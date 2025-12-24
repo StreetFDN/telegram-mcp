@@ -1,18 +1,14 @@
 {
-  "version": 2,
   "builds": [
     {
-      "src": "package.json",
-      "use": "@vercel/node"
+      "src": "api/index.py",
+      "use": "@vercel/python"
     }
   ],
-  "env": {
-    "BOT_TOKEN": "@bot_token"
-  },
-  "functions": {
-    "dist/index.js": {
-      "memory": 1024,
-      "maxDuration": 10
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "api/index.py"
     }
-  }
+  ]
 }
