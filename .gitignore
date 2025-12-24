@@ -13,6 +13,10 @@ dist/
 .env.local
 .env.*.local
 
+# Telegram session files
+.telegram-session
+*.session
+
 # Logs
 logs/
 *.log

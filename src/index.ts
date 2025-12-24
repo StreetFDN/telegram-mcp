@@ -9,16 +9,55 @@ import {
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { TelegramClient } from './telegram.js';
+import { TelegramUserClient } from './telegram.js';
+import fs from 'fs';
+import path from 'path';
 
 // Validate environment variables
-const BOT_TOKEN = process.env.BOT_TOKEN;
-if (!BOT_TOKEN) {
-  throw new Error('BOT_TOKEN environment variable is required');
+const API_ID = process.env.API_ID;
+const API_HASH = process.env.API_HASH;
+const SESSION_FILE = process.env.SESSION_FILE || '.telegram-session';
+
+if (!API_ID || !API_HASH) {
+  throw new Error('API_ID and API_HASH environment variables are required');
+}
+
+// Load session string from file if it exists
+let sessionString = '';
+try {
+  if (fs.existsSync(SESSION_FILE)) {
+    sessionString = fs.readFileSync(SESSION_FILE, 'utf-8').trim();
+    console.error('Loaded existing session from file');
+  }
+} catch (error) {
+  console.error('Could not load session file:', error);
 }
 
 // Initialize Telegram client
-const telegramClient = new TelegramClient(BOT_TOKEN);
+const telegramClient = new TelegramUserClient(
+  parseInt(API_ID),
+  API_HASH,
+  sessionString
+);
+
+// Connect and authenticate
+const initPromise = (async () => {
+  try {
+    const newSession = await telegramClient.connect();
+    
+    // Save session string to file for future use
+    if (newSession && newSession !== sessionString) {
+      fs.writeFileSync(SESSION_FILE, newSession, 'utf-8');
+      console.error('Session saved to file for future use');
+    }
+    
+    const userInfo = await telegramClient.getUserInfo();
+    console.error(`Connected as: ${userInfo.first_name} (@${userInfo.username || 'no username'})`);
+  } catch (error) {
+    console.error('Failed to initialize Telegram client:', error);
+    throw error;
+  }
+})();
 
 // Tool input schemas
 const ListMessagesSchema = z.object({
@@ -29,7 +68,7 @@ const ListMessagesSchema = z.object({
 const GetChatHistorySchema = z.object({
   chat_id: z.union([z.string(), z.number()]).describe('Chat ID or username'),
   limit: z.number().min(1).max(100).default(20).optional().describe('Number of messages to retrieve'),
-  offset: z.number().min(0).default(0).optional().describe('Offset for pagination'),
+  offset_id: z.number().min(0).default(0).optional().describe('Message ID to start from (for pagination)'),
 });
 
 const SendMessageSchema = z.object({
@@ -46,11 +85,19 @@ const ReplyToMessageSchema = z.object({
   parse_mode: z.enum(['Markdown', 'MarkdownV2', 'HTML']).optional().describe('Message formatting mode'),
 });
 
+const GetDialogsSchema = z.object({
+  limit: z.number().min(1).max(200).default(100).optional().describe('Number of dialogs to retrieve (1-200)'),
+});
+
+const GetChatInfoSchema = z.object({
+  chat_id: z.union([z.string(), z.number()]).describe('Chat ID or username'),
+});
+
 // Create MCP server
 const server = new Server(
   {
     name: 'telegram-mcp-server',
-    version: '1.0.0',
+    version: '2.0.0',
   },
   {
     capabilities: {
@@ -66,13 +113,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'list_messages',
         description:
-          'Get recent messages from a Telegram chat. Returns the most recent messages with sender info, timestamp, and content.',
+          'Get recent messages from a Telegram chat using your user session. Works with any chat where you are a member, including private messages, groups, channels, and supergroups.',
         inputSchema: {
           type: 'object',
           properties: {
             chat_id: {
               type: ['string', 'number'],
-              description: 'Chat ID or username (e.g., @channelname)',
+              description: 'Chat ID or username (e.g., @channelname, or numeric ID)',
             },
             limit: {
               type: 'number',
@@ -88,7 +135,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'get_chat_history',
         description:
-          'Get message history from a Telegram chat with pagination support. Allows retrieving older messages using offset.',
+          'Get message history from a Telegram chat with pagination support using offset_id. Access any chat where you are a member.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -103,9 +150,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               maximum: 100,
               default: 20,
             },
-            offset: {
+            offset_id: {
               type: 'number',
-              description: 'Offset for pagination (default: 0)',
+              description: 'Message ID to start from for pagination (default: 0 for most recent)',
               minimum: 0,
               default: 0,
             },
@@ -116,7 +163,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'send_message',
         description:
-          'Send a new message to a Telegram chat. Supports Markdown, MarkdownV2, and HTML formatting.',
+          'Send a new message to a Telegram chat as your user account. Supports Markdown, MarkdownV2, and HTML formatting.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -169,12 +216,47 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['chat_id', 'message_id', 'text'],
         },
       },
+      {
+        name: 'get_dialogs',
+        description:
+          'Get all dialogs (chats) that your user account has access to. Includes private chats, groups, channels, and supergroups.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            limit: {
+              type: 'number',
+              description: 'Number of dialogs to retrieve (1-200, default: 100)',
+              minimum: 1,
+              maximum: 200,
+              default: 100,
+            },
+          },
+        },
+      },
+      {
+        name: 'get_chat_info',
+        description:
+          'Get detailed information about a specific chat, including title, username, type, and member count.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            chat_id: {
+              type: ['string', 'number'],
+              description: 'Chat ID or username',
+            },
+          },
+          required: ['chat_id'],
+        },
+      },
     ],
   };
 });
 
 // Handle tool calls
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  // Wait for initialization to complete
+  await initPromise;
+
   try {
     const { name, arguments: args } = request.params;
 
@@ -200,7 +282,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const history = await telegramClient.getChatHistory(
           input.chat_id,
           input.limit || 20,
-          input.offset || 0
+          input.offset_id || 0
         );
         return {
           content: [
@@ -271,6 +353,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case 'get_dialogs': {
+        const input = GetDialogsSchema.parse(args);
+        const dialogs = await telegramClient.getDialogs(input.limit || 100);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(dialogs, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'get_chat_info': {
+        const input = GetChatInfoSchema.parse(args);
+        const chatInfo = await telegramClient.getChatInfo(input.chat_id);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(chatInfo, null, 2),
+            },
+          ],
+        };
+      }
+
       default:
         throw new McpError(
           ErrorCode.MethodNotFound,
@@ -298,7 +406,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Telegram MCP Server running on stdio');
+  console.error('Telegram MCP Server (User Session) running on stdio');
 }
 
 main().catch((error) => {
