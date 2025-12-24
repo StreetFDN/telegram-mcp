@@ -1,7 +1,7 @@
 {
   "name": "telegram-mcp-server",
-  "version": "1.0.0",
-  "description": "MCP server for Telegram Bot API integration",
+  "version": "2.0.0",
+  "description": "MCP server for Telegram User Session API integration using MTProto",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -13,19 +13,20 @@
   "keywords": [
     "mcp",
     "telegram",
-    "bot",
+    "mtproto",
+    "user-session",
     "mcp-server"
   ],
   "author": "Street Foundation",
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
-    "node-telegram-bot-api": "^0.66.0",
+    "telegram": "^2.25.12",
+    "input": "^1.0.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "@types/node-telegram-bot-api": "^0.64.7",
     "typescript": "^5.7.2"
   },
   "engines": {
