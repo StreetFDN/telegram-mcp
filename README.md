@@ -1,110 +1,250 @@
-# Telegram MCP Server
+# Telegram MCP Server (Python/Telethon)
 
-A Model Context Protocol (MCP) server that provides Telegram Bot API integration, enabling AI assistants and applications to interact with Telegram chats through a standardized interface.
+A Model Context Protocol (MCP) server that provides **user-level** Telegram integration using Telethon, enabling AI assistants and applications to interact with Telegram chats through user authentication (not bot tokens).
+
+## 🔥 Key Differences from Bot API
+
+This implementation uses **Telethon** with **user authentication** instead of the Bot API. This means:
+
+- ✅ Full access to all your chats, groups, and channels
+- ✅ Read complete message history (not just messages after bot was added)
+- ✅ No need to make bots administrators
+- ✅ Access to user-only features (reactions, stories, etc.)
+- ✅ Acts as your Telegram account, not a separate bot
 
 ## Features
 
-- 📨 **List Messages**: Retrieve recent messages from any Telegram chat
-- 📜 **Chat History**: Get message history with pagination support
-- ✉️ **Send Messages**: Send new messages to chats with formatting support
-- 💬 **Reply to Messages**: Reply to specific messages in conversations
-- 🔒 **Type-safe**: Built with TypeScript for robust type checking
-- 🚀 **Easy Deployment**: Ready for Vercel deployment
+- 🔐 **User Authentication**: Login with your phone number (one-time setup)
+- 💬 **List Chats**: Get all your conversations, groups, and channels
+- 📨 **Get Messages**: Retrieve message history from any chat
+- ✉️ **Send Messages**: Send messages and replies as yourself
+- 🔄 **Session Persistence**: Save session for future use (no repeated logins)
+- 🐍 **Python/Telethon**: Built with modern Python and Telethon library
+- 🚀 **MCP Protocol**: Standard Model Context Protocol interface
 
 ## Prerequisites
 
-- Node.js 18 or higher
+- Python 3.8 or higher
 - A Telegram account
-- npm or yarn
+- Telegram API credentials (API ID and API Hash)
 
 ## Setup Instructions
 
-### 1. Create a Telegram Bot
+### 1. Get Telegram API Credentials
 
-1. Open Telegram and search for [@BotFather](https://t.me/BotFather)
-2. Start a chat and send `/newbot`
-3. Follow the instructions to choose a name and username for your bot
-4. Save the **Bot Token** provided by BotFather (format: `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
+1. Visit [https://my.telegram.org/auth](https://my.telegram.org/auth)
+2. Log in with your phone number
+3. Go to "API development tools"
+4. Create a new application (if you haven't already)
+5. Note your **API ID** (numeric) and **API Hash** (string)
 
-### 2. Configure Bot Privacy Settings
+**For this implementation, we'll use:**
+- API_ID: `33109274`
+- API_HASH: `6ca27c49a99e2eb1e63ae2d2be770ba8`
 
-**Important**: By default, Telegram bots can only see messages that are directly sent to them. To allow your bot to read all messages in a chat:
-
-1. In your chat with @BotFather, send `/mybots`
-2. Select your bot
-3. Go to **Bot Settings** → **Group Privacy**
-4. Click **Turn off** (Disable Privacy Mode)
-
-This allows the bot to receive all messages in group chats where it's added.
-
-### 3. Add Bot to Chats
-
-For the bot to access messages in a chat:
-
-#### For Group Chats:
-1. Add your bot to the group chat
-2. **Make the bot an admin** (required for full message access):
-   - Go to chat settings → Administrators
-   - Add your bot as an administrator
-   - You can disable all admin permissions except "Remain Anonymous" if needed
-
-#### For Private Chats:
-- Simply start a chat with your bot by clicking the link BotFather provides or searching for your bot's username
-
-#### For Channels:
-1. Add your bot to the channel
-2. Make it an administrator with at least "Post Messages" permission
-
-### 4. Get Chat IDs
-
-To interact with a chat, you need its Chat ID:
-
-- **Private chats**: The Chat ID is your user ID (you'll see it when you send a message to the bot)
-- **Groups**: You can get the ID by:
-  1. Adding the bot to the group
-  2. Sending a message in the group
-  3. Visiting: `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
-  4. Look for the `"chat":{"id":...}` field
-- **Channels**: Use the channel username (e.g., `@channelname`) or get the numeric ID using the same method
-
-### 5. Installation
+### 2. Installation
 
 ```bash
 # Clone the repository
 git clone https://github.com/StreetFDN/telegram-mcp.git
 cd telegram-mcp
 
-# Install dependencies
-npm install
-
-# Build the project
-npm run build
+# Install Python dependencies
+pip install -r requirements.txt
 ```
 
-### 6. Configuration
+### 3. First-Time Authentication
 
-Set the required environment variable:
+The first time you run the server, you'll need to authenticate with your phone number:
 
 ```bash
-export BOT_TOKEN="your_bot_token_here"
+# Set API credentials
+export TELEGRAM_API_ID=33109274
+export TELEGRAM_API_HASH="6ca27c49a99e2eb1e63ae2d2be770ba8"
+
+# Run the server
+python main.py
 ```
 
-Or create a `.env` file (not tracked in git):
+The server will start and wait for authentication. You'll need to:
+
+1. **Use the `authenticate` tool** with your phone number
+2. **Receive a verification code** via Telegram
+3. **Submit the code** using the `authenticate` tool again
+4. **If 2FA is enabled**, provide your password
+
+#### Authentication Example
+
+```json
+// Step 1: Request code
+{
+  "name": "authenticate",
+  "arguments": {
+    "phone": "+1234567890"
+  }
+}
+
+// Response: Code sent to your phone
+
+// Step 2: Submit code
+{
+  "name": "authenticate",
+  "arguments": {
+    "phone": "+1234567890",
+    "code": "12345"
+  }
+}
+
+// Response: Success! Session string provided
+
+// Step 3 (if 2FA enabled): Submit password
+{
+  "name": "authenticate",
+  "arguments": {
+    "phone": "+1234567890",
+    "code": "12345",
+    "password": "your_2fa_password"
+  }
+}
+```
+
+### 4. Session Persistence
+
+After successful authentication, the server will provide a **session string**. Save this to avoid re-authenticating:
+
+```bash
+export TELEGRAM_SESSION="your_session_string_here"
+```
+
+Or add to `.env` file:
 
 ```env
-BOT_TOKEN=your_bot_token_here
+TELEGRAM_API_ID=33109274
+TELEGRAM_API_HASH=6ca27c49a99e2eb1e63ae2d2be770ba8
+TELEGRAM_SESSION=your_session_string_here
 ```
 
-### 7. Running the Server
+### 5. Running the Server
+
+Once authenticated:
 
 ```bash
-# Start the MCP server
-npm start
+# With environment variables set
+python main.py
+
+# Or with inline environment variables
+TELEGRAM_API_ID=33109274 TELEGRAM_API_HASH="6ca27c49a99e2eb1e63ae2d2be770ba8" TELEGRAM_SESSION="your_session" python main.py
 ```
 
-The server will run on stdio and communicate via the Model Context Protocol.
+The server runs on stdio and communicates via the Model Context Protocol.
+
+## MCP Tools
+
+### `authenticate`
+
+Authenticate with Telegram using your phone number (first-time setup).
+
+**Parameters:**
+- `phone` (string, optional): Phone number in international format (e.g., +1234567890)
+- `code` (string, optional): Verification code received via Telegram
+- `password` (string, optional): 2FA password if enabled
+
+**Example:**
+```json
+{
+  "phone": "+1234567890",
+  "code": "12345"
+}
+```
+
+### `list_chats`
+
+Get a list of all your chats, groups, and channels.
+
+**Parameters:**
+- `limit` (number, optional): Maximum number of chats to retrieve (default: 20, max: 100)
+
+**Example:**
+```json
+{
+  "limit": 50
+}
+```
+
+**Response includes:**
+- Chat ID (use this for other operations)
+- Chat name
+- Chat type (user, group, channel)
+- Unread message count
+- Last message preview
+
+### `get_messages`
+
+Get messages from a specific chat.
+
+**Parameters:**
+- `chat_id` (number, required): Chat ID from `list_chats`
+- `limit` (number, optional): Number of messages to retrieve (default: 10, max: 100)
+- `offset` (number, optional): Message offset for pagination (default: 0)
+
+**Example:**
+```json
+{
+  "chat_id": -1001234567890,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+**Response includes:**
+- Message ID
+- Message text
+- Sender information
+- Timestamp
+- Media information (if any)
+- Reply information
+
+### `send_message`
+
+Send a message to a chat.
+
+**Parameters:**
+- `chat_id` (number, required): Chat ID where to send the message
+- `text` (string, required): Message text
+- `reply_to` (number, optional): Message ID to reply to
+
+**Example:**
+```json
+{
+  "chat_id": -1001234567890,
+  "text": "Hello from MCP!",
+  "reply_to": 12345
+}
+```
+
+## Usage with MCP Clients
+
+Add this server to your MCP client configuration:
+
+```json
+{
+  "mcpServers": {
+    "telegram": {
+      "command": "python",
+      "args": ["/path/to/telegram-mcp/main.py"],
+      "env": {
+        "TELEGRAM_API_ID": "33109274",
+        "TELEGRAM_API_HASH": "6ca27c49a99e2eb1e63ae2d2be770ba8",
+        "TELEGRAM_SESSION": "your_session_string_here"
+      }
+    }
+  }
+}
+```
 
 ## Vercel Deployment
+
+The repository includes Vercel configuration for serverless deployment:
 
 ### Deploy to Vercel
 
@@ -123,177 +263,176 @@ The server will run on stdio and communicate via the Model Context Protocol.
    vercel
    ```
 
-4. Set environment variable in Vercel:
-   ```bash
-   vercel env add BOT_TOKEN
-   ```
-   Enter your bot token when prompted.
+4. Set environment variables in Vercel dashboard:
+   - `TELEGRAM_API_ID`: 33109274
+   - `TELEGRAM_API_HASH`: 6ca27c49a99e2eb1e63ae2d2be770ba8
+   - `TELEGRAM_SESSION`: Your session string
 
-5. Redeploy to apply environment variables:
-   ```bash
-   vercel --prod
-   ```
+**Note:** Full MCP functionality works best when running locally via stdio. The Vercel deployment provides a basic HTTP interface for status and health checks.
 
-## MCP Tools
+## Security & Privacy
 
-### `list_messages`
+### Important Security Notes
 
-Get recent messages from a Telegram chat.
+1. **Session String is Sensitive**: Your session string gives full access to your Telegram account. Treat it like a password!
+   - Never commit session strings to version control
+   - Use environment variables or secret management
+   - Rotate sessions if exposed (delete and re-authenticate)
 
-**Parameters:**
-- `chat_id` (string | number): Chat ID or username (e.g., @channelname)
-- `limit` (number, optional): Number of messages to retrieve (1-100, default: 10)
+2. **API Credentials**: Keep your API_ID and API_HASH private
+   - Don't share in public repositories
+   - Use environment variables
+   - Consider using different credentials for production
 
-**Example:**
-```json
-{
-  "chat_id": "@mychannel",
-  "limit": 20
-}
-```
+3. **Phone Number Verification**: 
+   - You'll receive a verification code via Telegram
+   - The code is only valid for a short time
+   - Never share your verification code
 
-### `get_chat_history`
+4. **Two-Factor Authentication (2FA)**:
+   - If you have 2FA enabled, you'll need to provide your password
+   - The password is only used during authentication
+   - Consider using 2FA for additional account security
 
-Get message history with pagination support.
+### Session Management
 
-**Parameters:**
-- `chat_id` (string | number): Chat ID or username
-- `limit` (number, optional): Number of messages (1-100, default: 20)
-- `offset` (number, optional): Offset for pagination (default: 0)
+Sessions persist until:
+- You log out manually
+- You delete the session from another device
+- Telegram invalidates the session (rare)
 
-**Example:**
-```json
-{
-  "chat_id": -1001234567890,
-  "limit": 50,
-  "offset": 0
-}
-```
+To revoke sessions:
+1. Open Telegram app
+2. Settings → Privacy and Security → Active Sessions
+3. Terminate the MCP server session
 
-### `send_message`
+## Limitations & Notes
 
-Send a new message to a chat.
+1. **Rate Limits**: Telegram has rate limits to prevent spam:
+   - ~30 messages per second to the same chat
+   - Flood wait errors if exceeded (automatic backoff implemented)
 
-**Parameters:**
-- `chat_id` (string | number): Chat ID or username
-- `text` (string): Message text
-- `parse_mode` (string, optional): 'Markdown', 'MarkdownV2', or 'HTML'
-- `disable_notification` (boolean, optional): Send silently
+2. **Message History**: Unlike Bot API, user accounts have full access to chat history
 
-**Example:**
-```json
-{
-  "chat_id": "@mychannel",
-  "text": "Hello from MCP!",
-  "parse_mode": "Markdown"
-}
-```
+3. **User Restrictions**: Some operations may be restricted based on:
+   - Chat privacy settings
+   - User permissions in groups
+   - Telegram's spam prevention
 
-### `reply_to_message`
-
-Reply to a specific message.
-
-**Parameters:**
-- `chat_id` (string | number): Chat ID or username
-- `message_id` (number): ID of message to reply to
-- `text` (string): Reply text
-- `parse_mode` (string, optional): 'Markdown', 'MarkdownV2', or 'HTML'
-
-**Example:**
-```json
-{
-  "chat_id": -1001234567890,
-  "message_id": 12345,
-  "text": "Thanks for your message!"
-}
-```
-
-## Usage with MCP Clients
-
-Add this server to your MCP client configuration:
-
-```json
-{
-  "mcpServers": {
-    "telegram": {
-      "command": "node",
-      "args": ["/path/to/telegram-mcp/dist/index.js"],
-      "env": {
-        "BOT_TOKEN": "your_bot_token_here"
-      }
-    }
-  }
-}
-```
-
-## Limitations & Important Notes
-
-1. **Message History**: The Telegram Bot API has limitations on retrieving historical messages. The bot can only see:
-   - Messages sent after the bot was added to the chat
-   - Messages when privacy mode is disabled
-   - Messages in chats where the bot is an admin
-
-2. **Rate Limits**: Telegram has rate limits on API calls. Be mindful of:
-   - 30 messages per second to the same chat
-   - 20 messages per minute to different chats
-
-3. **Message Retrieval**: For best message retrieval results:
-   - Disable privacy mode
-   - Make the bot an admin
-   - Messages are cached as they arrive
-
-4. **Webhooks vs Polling**: This implementation uses polling for message retrieval. For production use with high message volumes, consider implementing webhook support.
+4. **Account Safety**: 
+   - Use responsibly to avoid account restrictions
+   - Don't use for spam or automated mass messaging
+   - Follow Telegram's Terms of Service
 
 ## Development
 
 ```bash
-# Watch mode for development
-npm run dev
+# Install dependencies
+pip install -r requirements.txt
 
-# Build
-npm run build
+# Run in development
+python main.py
 
-# Run built version
-npm start
+# Test authentication flow
+python -c "import asyncio; from telegram_client import TelegramUserClient; asyncio.run(TelegramUserClient(33109274, '6ca27c49a99e2eb1e63ae2d2be770ba8').start())"
 ```
 
 ## Troubleshooting
 
-### Bot Can't See Messages
-- Ensure privacy mode is disabled in @BotFather
-- Make sure the bot is an admin in group chats
-- Verify the bot was added after privacy mode was disabled (remove and re-add if needed)
+### Authentication Fails
+- Verify API_ID and API_HASH are correct
+- Check phone number format (must include country code: +1234567890)
+- Ensure you have network connectivity to Telegram servers
+- Try requesting a new verification code
 
-### Invalid Token Error
-- Double-check your BOT_TOKEN
-- Ensure there are no extra spaces or characters
-- Verify the token is active (check with @BotFather)
+### Session Expired
+- Delete TELEGRAM_SESSION and re-authenticate
+- Check active sessions in Telegram app
+- Ensure session string wasn't corrupted
 
-### Chat Not Found
-- Verify the chat_id is correct
-- For groups, use the numeric ID (negative number)
-- For channels, use @username or numeric ID
-- Ensure the bot is a member of the chat
+### Can't Access Certain Chats
+- Verify you're actually a member of the chat
+- Check if the chat has privacy restrictions
+- For channels, ensure they're not private
 
-## Security Notes
+### Import Errors
+- Install all requirements: `pip install -r requirements.txt`
+- Check Python version: `python --version` (needs 3.8+)
+- Try upgrading pip: `pip install --upgrade pip`
 
-- Never commit your BOT_TOKEN to version control
-- Use environment variables or secret management services
-- In production, use Vercel's encrypted environment variables
-- Regularly rotate your bot token if exposed
+### Connection Issues
+- Check firewall settings
+- Verify internet connectivity
+- Telegram may be blocked in some regions (consider VPN)
+
+## File Structure
+
+```
+telegram-mcp/
+├── main.py                 # MCP server implementation
+├── telegram_client.py      # Telethon client wrapper
+├── requirements.txt        # Python dependencies
+├── vercel.json            # Vercel deployment config
+├── api/
+│   └── index.py           # Vercel serverless function
+└── README.md              # This file
+```
+
+## Migration from TypeScript Version
+
+If you're migrating from the TypeScript/Bot API version:
+
+**Key Changes:**
+1. No more BOT_TOKEN - use user authentication instead
+2. Requires phone number verification on first use
+3. Session persistence via TELEGRAM_SESSION env variable
+4. Full message history access (not limited to post-bot messages)
+5. Python instead of Node.js/TypeScript
+
+**Migration Steps:**
+1. Get Telegram API credentials from my.telegram.org
+2. Install Python dependencies
+3. Authenticate with your phone number
+4. Save session string to environment
+5. Update MCP client configuration to use Python command
 
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues or pull requests.
 
+### Development Guidelines
+- Follow PEP 8 style guide
+- Add type hints to functions
+- Include docstrings for public methods
+- Test authentication flow before submitting
+
 ## License
 
 MIT
 
-## About MCP
+## About
 
-The Model Context Protocol (MCP) is an open standard that enables seamless integration between AI applications and external data sources. Learn more at [modelcontextprotocol.io](https://modelcontextprotocol.io).
+### Telethon
+[Telethon](https://docs.telethon.dev/) is a modern Python library for interacting with Telegram's API using user accounts.
+
+### Model Context Protocol (MCP)
+The Model Context Protocol is an open standard that enables seamless integration between AI applications and external data sources. Learn more at [modelcontextprotocol.io](https://modelcontextprotocol.io).
 
 ## Credits
 
 Built by [Street Foundation](https://github.com/StreetFDN)
+
+## Changelog
+
+### v2.0.0 (Python/Telethon Migration)
+- 🔄 Migrated from TypeScript/Bot API to Python/Telethon
+- 🔐 User authentication with session persistence
+- 📱 Phone number verification flow
+- 💬 Full message history access
+- 🎯 Simplified MCP tools (list_chats, get_messages, send_message)
+- 🐍 Modern Python implementation with type hints
+
+### v1.0.0 (Original TypeScript)
+- Bot API implementation
+- Basic message operations
+- TypeScript/Node.js runtime
