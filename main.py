@@ -538,16 +538,16 @@ async def health_check(request):
 # Create SSE transport
 sse = SseServerTransport("/messages")
 
-# SSE endpoint handlers using the correct methods
+# SSE endpoint handlers using the correct ASGI pattern
 async def handle_sse_endpoint(request: Request):
     """Handle SSE GET requests for establishing SSE connections."""
-    async with sse.connect_sse(app.create_initialization_options()) as streams:
-        return await sse.handle_sse(request, streams[0], streams[1])
+    async with sse.connect_sse(request.scope, request.receive, request.send) as (read, write):
+        await app.run(read, write, app.create_initialization_options())
 
 async def handle_post_endpoint(request: Request):
     """Handle POST requests for sending MCP messages."""
-    async with sse.connect_sse(app.create_initialization_options()) as streams:
-        return await sse.handle_post_message(request, streams[0], streams[1])
+    async with sse.connect_sse(request.scope, request.receive, request.send) as (read, write):
+        await app.run(read, write, app.create_initialization_options())
 
 # Create Starlette app with proper SSE routes
 starlette_app = Starlette(
