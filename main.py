@@ -29,6 +29,8 @@ from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.responses import Response
 from starlette.requests import Request
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 import uvicorn
 
 # Configure logging
@@ -515,7 +517,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 
 
 # =============================================================================
-# MCP SSE Server Setup (Correct Pattern)
+# MCP SSE Server Setup with Proper Headers and Response Format
 # =============================================================================
 
 # Health check endpoint
@@ -532,31 +534,126 @@ async def health_check(request):
     
     return Response(
         content=f'{{"status":"healthy","server":"telegram-mcp","version":"1.0.0","authenticated":{str(is_authenticated).lower()}}}',
-        media_type="application/json"
+        media_type="application/json",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        }
     )
 
 # Create SSE transport
 sse = SseServerTransport("/messages")
 
-# SSE endpoint handlers using the correct ASGI pattern
-async def handle_sse_endpoint(request: Request):
-    """Handle SSE GET requests for establishing SSE connections."""
-    async with sse.connect_sse(request.scope, request.receive, request.send) as (read, write):
-        await app.run(read, write, app.create_initialization_options())
+# SSE endpoint handlers with proper MCP SSE handshake
+async def handle_sse_get(request: Request):
+    """Handle SSE GET requests for establishing SSE connections with proper MCP handshake."""
+    logger.info(f"🔵 [SSE GET] Received GET request to /sse endpoint")
+    logger.info(f"🔵 [SSE GET] Request headers: {dict(request.headers)}")
+    logger.info(f"🔵 [SSE GET] Request method: {request.method}")
+    logger.info(f"🔵 [SSE GET] Request path: {request.url.path}")
+    
+    # Return a proper HTTP response with SSE headers for GET requests
+    # This establishes the SSE connection with proper MCP protocol
+    async def event_stream():
+        """Generate SSE events for MCP handshake."""
+        logger.info(f"✅ [SSE GET] Starting SSE event stream")
+        
+        # Send initial endpoint event for MCP handshake
+        endpoint_message = f'event: endpoint\ndata: /messages\n\n'
+        logger.info(f"📤 [SSE GET] Sending endpoint event: {endpoint_message.strip()}")
+        yield endpoint_message
+        
+        # Now handle the actual MCP connection
+        try:
+            async with sse.connect_sse(request.scope, request.receive, request._send) as (read, write):
+                logger.info(f"✅ [SSE GET] SSE connection established, running MCP app")
+                await app.run(read, write, app.create_initialization_options())
+        except Exception as e:
+            logger.error(f"❌ [SSE GET] Error in SSE connection: {e}", exc_info=True)
+    
+    from starlette.responses import StreamingResponse
+    
+    logger.info(f"📡 [SSE GET] Returning StreamingResponse with proper SSE headers")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
-async def handle_post_endpoint(request: Request):
+async def handle_sse_post(request: Request):
     """Handle POST requests for sending MCP messages."""
-    async with sse.connect_sse(request.scope, request.receive, request.send) as (read, write):
-        await app.run(read, write, app.create_initialization_options())
+    logger.info(f"🟢 [SSE POST] Received POST request to /sse endpoint")
+    logger.info(f"🟢 [SSE POST] Request headers: {dict(request.headers)}")
+    
+    try:
+        # Handle POST messages through the SSE transport
+        async with sse.connect_sse(request.scope, request.receive, request._send) as (read, write):
+            logger.info(f"✅ [SSE POST] SSE connection established for POST, running MCP app")
+            await app.run(read, write, app.create_initialization_options())
+        
+        # Return a proper response
+        return Response(
+            content='{"status":"ok"}',
+            media_type="application/json",
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "*",
+            }
+        )
+    except Exception as e:
+        logger.error(f"❌ [SSE POST] Error handling POST: {e}", exc_info=True)
+        return Response(
+            content=f'{{"status":"error","message":"{str(e)}"}}',
+            status_code=500,
+            media_type="application/json",
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "*",
+            }
+        )
 
-# Create Starlette app with proper SSE routes
+async def handle_options(request: Request):
+    """Handle OPTIONS requests for CORS preflight."""
+    logger.info(f"🟣 [OPTIONS] Received OPTIONS request to {request.url.path}")
+    return Response(
+        content="",
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Max-Age": "86400",
+        }
+    )
+
+# Create Starlette app with proper SSE routes and CORS middleware
 starlette_app = Starlette(
     debug=True,
     routes=[
         Route("/health", health_check, methods=["GET"]),
-        Route("/sse", handle_sse_endpoint, methods=["GET"]),
-        Route("/sse", handle_post_endpoint, methods=["POST"]),
+        Route("/sse", handle_options, methods=["OPTIONS"]),
+        Route("/sse", handle_sse_get, methods=["GET"]),
+        Route("/sse", handle_sse_post, methods=["POST"]),
     ],
+    middleware=[
+        Middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    ]
 )
 
 
@@ -579,9 +676,10 @@ def run_sse_server():
     logger.info("Starting Telegram MCP Server with SSE interface...")
     logger.info(f"API ID: {API_ID}")
     logger.info(f"Session available: {bool(TELEGRAM_SESSION)}")
-    logger.info("Server will be available at http://0.0.0.0:8080")
-    logger.info("MCP SSE endpoint: http://0.0.0.0:8080/sse")
-    logger.info("Health check: http://0.0.0.0:8080/health")
+    logger.info("🌐 Server will be available at http://0.0.0.0:8080")
+    logger.info("🔌 MCP SSE endpoint: http://0.0.0.0:8080/sse")
+    logger.info("❤️ Health check: http://0.0.0.0:8080/health")
+    logger.info("✅ Server configured with proper CORS headers and SSE handshake")
     
     uvicorn.run(
         starlette_app,
