@@ -26,7 +26,7 @@ from telegram_client import TelegramUserClient
 # Import for SSE server
 from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
-from starlette.routing import Route
+from starlette.routing import Route, Mount
 from starlette.responses import Response
 import uvicorn
 
@@ -534,23 +534,15 @@ async def health_check(request):
         media_type="application/json"
     )
 
-# SSE endpoint handler
-async def handle_sse(request):
-    """Handle SSE connections for MCP."""
-    async with SseServerTransport("/messages") as transport:
-        await app.run(
-            transport.read_stream,
-            transport.write_stream,
-            app.create_initialization_options()
-        )
-    return Response()
+# Create SSE transport with the required endpoint argument
+sse = SseServerTransport("/messages")
 
-# Create Starlette app with SSE endpoint
+# Create Starlette app with proper SSE mounting
 starlette_app = Starlette(
     debug=True,
     routes=[
         Route("/health", health_check, methods=["GET"]),
-        Route("/sse", handle_sse, methods=["GET", "POST"]),
+        Mount("/sse", app=sse.get_asgi_app()),
     ],
 )
 
@@ -577,6 +569,22 @@ def run_sse_server():
     logger.info("Server will be available at http://0.0.0.0:8080")
     logger.info("MCP SSE endpoint: http://0.0.0.0:8080/sse")
     logger.info("Health check: http://0.0.0.0:8080/health")
+    
+    # Connect the MCP app to the SSE transport
+    async def lifespan(app_instance):
+        """Lifespan context manager for the server."""
+        async with sse.connect_sse(
+            server_params=app.create_initialization_options()
+        ) as streams:
+            async with asyncio.TaskGroup() as tg:
+                tg.create_task(app.run(
+                    streams[0],
+                    streams[1],
+                    app.create_initialization_options()
+                ))
+                yield
+    
+    starlette_app.router.lifespan_context = lifespan
     
     uvicorn.run(
         starlette_app,
