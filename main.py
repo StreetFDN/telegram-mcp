@@ -517,7 +517,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 
 
 # =============================================================================
-# MCP SSE Server Setup with Proper ASGI Pattern
+# MCP SSE Server Setup with Correct SseServerTransport API
 # =============================================================================
 
 # Health check endpoint
@@ -542,15 +542,16 @@ async def health_check(request):
         }
     )
 
-# Create SSE transport
-sse = SseServerTransport("/messages")
+# Create SSE transport - initialize with "/sse" to match the route path
+sse = SseServerTransport("/sse")
 
 
-# SSE endpoint handlers using proper ASGI pattern
+# SSE endpoint handlers using correct SseServerTransport API
 async def handle_sse(scope, receive, send):
     """
-    Handle SSE requests as a raw ASGI application.
-    Let SseServerTransport handle the entire ASGI conversation directly.
+    Handle SSE requests using the correct SseServerTransport API.
+    - GET requests: Use transport.connect_sse() for establishing SSE stream
+    - POST requests: Use transport.handle_post_message() for receiving messages
     """
     method = scope["method"]
     logger.info(f"🔵 [SSE {method}] Received {method} request to /sse endpoint")
@@ -576,49 +577,32 @@ async def handle_sse(scope, receive, send):
         return
     
     if method == "GET":
-        # Handle SSE connection - let the transport control the entire response
+        # Handle SSE connection using connect_sse
         logger.info(f"📡 [SSE GET] Setting up SSE connection")
         
         try:
-            logger.info(f"✅ [SSE GET] Delegating to SseServerTransport")
-            # Let SseServerTransport handle the entire ASGI conversation
-            async with sse.connect_sse(scope, receive, send) as (read, write):
+            logger.info(f"✅ [SSE GET] Calling transport.connect_sse()")
+            # Use connect_sse for GET - this establishes the SSE stream
+            async with sse.connect_sse(scope, receive, send) as (read_stream, write_stream):
                 logger.info(f"✅ [SSE GET] SSE connection established, running MCP app")
-                await app.run(read, write, app.create_initialization_options())
+                await app.run(read_stream, write_stream, app.create_initialization_options())
             logger.info(f"✅ [SSE GET] MCP app finished, connection closed")
         except Exception as e:
             logger.error(f"❌ [SSE GET] Error in SSE connection: {e}", exc_info=True)
             # Don't try to send a response - the transport already handled it or the connection is broken
     
     elif method == "POST":
-        # Handle POST messages through the SSE transport
+        # Handle POST messages using handle_post_message
         logger.info(f"🟢 [SSE POST] Handling POST request")
         
         try:
-            # Let the transport handle the MCP message processing
-            async with sse.connect_sse(scope, receive, send) as (read, write):
-                logger.info(f"✅ [SSE POST] Processing MCP message")
-                await app.run(read, write, app.create_initialization_options())
-            
-            # After MCP processing is complete, send a simple success response
-            logger.info(f"✅ [SSE POST] POST handled successfully, sending response")
-            await send({
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [
-                    [b"content-type", b"application/json"],
-                    [b"access-control-allow-origin", b"*"],
-                    [b"access-control-allow-methods", b"GET, POST, OPTIONS"],
-                    [b"access-control-allow-headers", b"*"],
-                ],
-            })
-            await send({
-                "type": "http.response.body",
-                "body": b'{"status":"ok"}',
-            })
+            logger.info(f"✅ [SSE POST] Calling transport.handle_post_message()")
+            # Use handle_post_message for POST - this processes incoming messages
+            await sse.handle_post_message(scope, receive, send)
+            logger.info(f"✅ [SSE POST] POST handled successfully")
         except Exception as e:
             logger.error(f"❌ [SSE POST] Error handling POST: {e}", exc_info=True)
-            # Send error response
+            # Send error response if possible
             try:
                 await send({
                     "type": "http.response.start",
@@ -681,7 +665,7 @@ def run_sse_server():
     logger.info("🌐 Server will be available at http://0.0.0.0:8080")
     logger.info("🔌 MCP SSE endpoint: http://0.0.0.0:8080/sse")
     logger.info("❤️ Health check: http://0.0.0.0:8080/health")
-    logger.info("✅ Server configured with proper CORS headers and ASGI pattern")
+    logger.info("✅ Server configured with correct SseServerTransport API")
     
     uvicorn.run(
         starlette_app,
