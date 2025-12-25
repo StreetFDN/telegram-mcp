@@ -550,7 +550,7 @@ sse = SseServerTransport("/messages")
 async def handle_sse(scope, receive, send):
     """
     Handle SSE requests as a raw ASGI application.
-    This receives scope, receive, and send directly from ASGI, not from Request object.
+    Let SseServerTransport handle the entire ASGI conversation directly.
     """
     method = scope["method"]
     logger.info(f"🔵 [SSE {method}] Received {method} request to /sse endpoint")
@@ -576,63 +576,32 @@ async def handle_sse(scope, receive, send):
         return
     
     if method == "GET":
-        # Handle SSE connection with proper event stream
+        # Handle SSE connection - let the transport control the entire response
         logger.info(f"📡 [SSE GET] Setting up SSE connection")
         
-        # Send SSE response headers
-        await send({
-            "type": "http.response.start",
-            "status": 200,
-            "headers": [
-                [b"content-type", b"text/event-stream"],
-                [b"cache-control", b"no-cache"],
-                [b"connection", b"keep-alive"],
-                [b"access-control-allow-origin", b"*"],
-                [b"access-control-allow-methods", b"GET, POST, OPTIONS"],
-                [b"access-control-allow-headers", b"*"],
-                [b"x-accel-buffering", b"no"],
-            ],
-        })
-        
-        # Send initial endpoint event for MCP handshake
-        endpoint_event = b"event: endpoint\ndata: /messages\n\n"
-        logger.info(f"📤 [SSE GET] Sending endpoint event")
-        await send({
-            "type": "http.response.body",
-            "body": endpoint_event,
-            "more_body": True,
-        })
-        
-        # Now handle the actual MCP connection using the SSE transport
         try:
-            logger.info(f"✅ [SSE GET] Establishing MCP SSE connection")
+            logger.info(f"✅ [SSE GET] Delegating to SseServerTransport")
+            # Let SseServerTransport handle the entire ASGI conversation
             async with sse.connect_sse(scope, receive, send) as (read, write):
                 logger.info(f"✅ [SSE GET] SSE connection established, running MCP app")
                 await app.run(read, write, app.create_initialization_options())
+            logger.info(f"✅ [SSE GET] MCP app finished, connection closed")
         except Exception as e:
             logger.error(f"❌ [SSE GET] Error in SSE connection: {e}", exc_info=True)
-            # Try to send error if connection still open
-            try:
-                await send({
-                    "type": "http.response.body",
-                    "body": b"",
-                    "more_body": False,
-                })
-            except:
-                pass
+            # Don't try to send a response - the transport already handled it or the connection is broken
     
     elif method == "POST":
         # Handle POST messages through the SSE transport
         logger.info(f"🟢 [SSE POST] Handling POST request")
         
         try:
-            # Connect and handle the POST message
+            # Let the transport handle the MCP message processing
             async with sse.connect_sse(scope, receive, send) as (read, write):
-                logger.info(f"✅ [SSE POST] SSE connection established for POST, running MCP app")
+                logger.info(f"✅ [SSE POST] Processing MCP message")
                 await app.run(read, write, app.create_initialization_options())
             
-            # Send success response
-            logger.info(f"✅ [SSE POST] POST handled successfully")
+            # After MCP processing is complete, send a simple success response
+            logger.info(f"✅ [SSE POST] POST handled successfully, sending response")
             await send({
                 "type": "http.response.start",
                 "status": 200,
@@ -650,21 +619,25 @@ async def handle_sse(scope, receive, send):
         except Exception as e:
             logger.error(f"❌ [SSE POST] Error handling POST: {e}", exc_info=True)
             # Send error response
-            await send({
-                "type": "http.response.start",
-                "status": 500,
-                "headers": [
-                    [b"content-type", b"application/json"],
-                    [b"access-control-allow-origin", b"*"],
-                    [b"access-control-allow-methods", b"GET, POST, OPTIONS"],
-                    [b"access-control-allow-headers", b"*"],
-                ],
-            })
-            error_body = f'{{"status":"error","message":"{str(e)}"}}'.encode()
-            await send({
-                "type": "http.response.body",
-                "body": error_body,
-            })
+            try:
+                await send({
+                    "type": "http.response.start",
+                    "status": 500,
+                    "headers": [
+                        [b"content-type", b"application/json"],
+                        [b"access-control-allow-origin", b"*"],
+                        [b"access-control-allow-methods", b"GET, POST, OPTIONS"],
+                        [b"access-control-allow-headers", b"*"],
+                    ],
+                })
+                error_body = f'{{"status":"error","message":"{str(e)}"}}'.encode()
+                await send({
+                    "type": "http.response.body",
+                    "body": error_body,
+                })
+            except:
+                # Connection might already be broken
+                logger.error(f"❌ [SSE POST] Could not send error response")
 
 
 # Create Starlette app with proper SSE routes and CORS middleware
