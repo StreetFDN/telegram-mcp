@@ -547,46 +547,22 @@ sse = SseServerTransport("/messages")
 
 # SSE endpoint handlers with proper MCP SSE handshake
 async def handle_sse_get(request: Request):
-    """Handle SSE GET requests for establishing SSE connections with proper MCP handshake."""
     logger.info(f"🔵 [SSE GET] Received GET request to /sse endpoint")
-    logger.info(f"🔵 [SSE GET] Request headers: {dict(request.headers)}")
-    logger.info(f"🔵 [SSE GET] Request method: {request.method}")
-    logger.info(f"🔵 [SSE GET] Request path: {request.url.path}")
     
-    # Return a proper HTTP response with SSE headers for GET requests
-    # This establishes the SSE connection with proper MCP protocol
-    async def event_stream():
-        """Generate SSE events for MCP handshake."""
-        logger.info(f"✅ [SSE GET] Starting SSE event stream")
-        
-        # Send initial endpoint event for MCP handshake
-        endpoint_message = f'event: endpoint\ndata: /messages\n\n'
-        logger.info(f"📤 [SSE GET] Sending endpoint event: {endpoint_message.strip()}")
-        yield endpoint_message
-        
-        # Now handle the actual MCP connection
-        try:
-            async with sse.connect_sse(request.scope, request.receive, request._send) as (read, write):
-                logger.info(f"✅ [SSE GET] SSE connection established, running MCP app")
-                await app.run(read, write, app.create_initialization_options())
-        except Exception as e:
-            logger.error(f"❌ [SSE GET] Error in SSE connection: {e}", exc_info=True)
-    
-    from starlette.responses import StreamingResponse
-    
-    logger.info(f"📡 [SSE GET] Returning StreamingResponse with proper SSE headers")
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "*",
-            "X-Accel-Buffering": "no",
-        }
-    )
+    try:
+        # Let SSE transport handle the connection directly
+        async with sse.connect_sse(request.scope, request.receive, request._send) as (read, write):
+            logger.info(f"✅ [SSE GET] SSE connection established")
+            await app.run(read, write, app.create_initialization_options())
+            
+        return Response(status_code=200)
+    except Exception as e:
+        logger.error(f"❌ [SSE GET] Error: {e}", exc_info=True)
+        return Response(
+            content=f'{{"status":"error","message":"{str(e)}"}}',
+            status_code=500,
+            media_type="application/json"
+        )
 
 async def handle_sse_post(request: Request):
     """Handle POST requests for sending MCP messages."""
