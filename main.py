@@ -8,6 +8,8 @@ import os
 import sys
 import asyncio
 import logging
+import json
+import traceback
 from typing import Any, Dict, Optional
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -27,7 +29,7 @@ from telegram_client import TelegramUserClient
 from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
 from starlette.routing import Route, Mount
-from starlette.responses import Response
+from starlette.responses import Response, JSONResponse
 from starlette.requests import Request
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
@@ -517,24 +519,236 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 
 
 # =============================================================================
-# MCP SSE Server Setup with Proper ASGI Pattern
+# MCP SSE Server Setup with Proper ASGI Pattern and Error Handling
 # =============================================================================
 
 # Health check endpoint
 async def health_check(request):
     """Health check endpoint that returns server status."""
-    global telegram_client
+    try:
+        global telegram_client
+        
+        is_authenticated = False
+        if telegram_client is not None:
+            try:
+                is_authenticated = telegram_client._is_authenticated
+            except:
+                pass
+        
+        return JSONResponse(
+            content={
+                "status": "healthy",
+                "server": "telegram-mcp",
+                "version": "1.0.0",
+                "authenticated": is_authenticated
+            },
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "*",
+            }
+        )
+    except Exception as e:
+        logger.error(f"❌ [HEALTH] Error in health check: {e}", exc_info=True)
+        return JSONResponse(
+            content={
+                "status": "error",
+                "message": str(e)
+            },
+            status_code=500,
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "*",
+            }
+        )
+
+# Create SSE transport
+sse = SseServerTransport("/messages")
+
+
+async def send_json_error(send, message: str, status: int = 500):
+    """Helper to send JSON error responses."""
+    try:
+        error_body = json.dumps({
+            "status": "error",
+            "message": message,
+            "error_type": "server_error"
+        })
+        await send({
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                [b"content-type", b"application/json"],
+                [b"access-control-allow-origin", b"*"],
+                [b"access-control-allow-methods", b"GET, POST, OPTIONS"],
+                [b"access-control-allow-headers", b"*"],
+            ],
+        })
+        await send({
+            "type": "http.response.body",
+            "body": error_body.encode(),
+        })
+    except Exception as e:
+        logger.error(f"❌ Failed to send error response: {e}", exc_info=True)
+
+
+# SSE endpoint handlers using proper ASGI pattern with comprehensive error handling
+async def handle_sse(scope, receive, send):
+    """
+    Handle SSE requests as a raw ASGI application.
+    All errors are caught and return proper JSON responses.
+    """
+    method = scope.get("method", "UNKNOWN")
+    path = scope.get("path", "/unknown")
     
-    is_authenticated = False
-    if telegram_client is not None:
+    logger.info(f"🔵 [SSE {method}] Received {method} request to {path}")
+    
+    try:
+        if method == "OPTIONS":
+            # Handle CORS preflight - wrap in try/catch
+            try:
+                logger.info(f"🟣 [OPTIONS] Handling CORS preflight")
+                await send({
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [
+                        [b"access-control-allow-origin", b"*"],
+                        [b"access-control-allow-methods", b"GET, POST, OPTIONS"],
+                        [b"access-control-allow-headers", b"*"],
+                        [b"access-control-max-age", b"86400"],
+                    ],
+                })
+                await send({
+                    "type": "http.response.body",
+                    "body": b"",
+                })
+                return
+            except Exception as e:
+                logger.error(f"❌ [OPTIONS] Error in CORS handler: {e}", exc_info=True)
+                await send_json_error(send, str(e), 500)
+                return
+        
+        elif method == "GET":
+            # Handle SSE connection - wrap in comprehensive try/catch
+            logger.info(f"📡 [SSE GET] Setting up SSE connection")
+            
+            try:
+                # Let SseServerTransport handle the entire ASGI conversation
+                logger.info(f"✅ [SSE GET] Delegating to SseServerTransport")
+                async with sse.connect_sse(scope, receive, send) as (read, write):
+                    logger.info(f"✅ [SSE GET] SSE connection established, running MCP app")
+                    await app.run(read, write, app.create_initialization_options())
+                    logger.info(f"✅ [SSE GET] MCP app completed successfully")
+                    
+            except Exception as e:
+                logger.error(f"❌ [SSE GET] Error in SSE connection: {e}", exc_info=True)
+                # Try to send error response if connection still viable
+                try:
+                    await send_json_error(send, str(e), 500)
+                except:
+                    # Connection might be closed
+                    logger.error(f"❌ [SSE GET] Could not send error response, connection closed")
+        
+        elif method == "POST":
+            # Handle POST messages - wrap in comprehensive try/catch
+            logger.info(f"🟢 [SSE POST] Handling POST request")
+            
+            try:
+                # Read request body
+                body = b""
+                body_received = False
+                try:
+                    while True:
+                        message = await receive()
+                        if message["type"] == "http.request":
+                            body += message.get("body", b"")
+                            if not message.get("more_body", False):
+                                body_received = True
+                                break
+                        elif message["type"] == "http.disconnect":
+                            logger.warning(f"⚠️ [SSE POST] Client disconnected during body read")
+                            return
+                except Exception as e:
+                    logger.error(f"❌ [SSE POST] Error reading request body: {e}", exc_info=True)
+                    await send_json_error(send, f"Error reading request: {str(e)}", 400)
+                    return
+                
+                logger.info(f"🟢 [SSE POST] Request body length: {len(body)}")
+                
+                # Validate JSON if body present
+                if body:
+                    try:
+                        json_data = json.loads(body)
+                        logger.info(f"🟢 [SSE POST] Parsed JSON data successfully")
+                    except json.JSONDecodeError as e:
+                        logger.error(f"❌ [SSE POST] Invalid JSON: {e}")
+                        await send_json_error(send, f"Invalid JSON: {str(e)}", 400)
+                        return
+                
+                # Process through SSE transport
+                try:
+                    logger.info(f"✅ [SSE POST] Processing message through MCP")
+                    async with sse.connect_sse(scope, receive, send) as (read, write):
+                        await app.run(read, write, app.create_initialization_options())
+                    logger.info(f"✅ [SSE POST] Message processed successfully")
+                except Exception as e:
+                    logger.error(f"❌ [SSE POST] Error processing message: {e}", exc_info=True)
+                    await send_json_error(send, str(e), 500)
+                    return
+                
+                # Send success response - 200 OK with JSON body
+                try:
+                    await send({
+                        "type": "http.response.start",
+                        "status": 200,
+                        "headers": [
+                            [b"content-type", b"application/json"],
+                            [b"access-control-allow-origin", b"*"],
+                            [b"access-control-allow-methods", b"GET, POST, OPTIONS"],
+                            [b"access-control-allow-headers", b"*"],
+                        ],
+                    })
+                    await send({
+                        "type": "http.response.body",
+                        "body": b'{"status":"ok"}',
+                    })
+                    logger.info(f"✅ [SSE POST] Sent 200 OK response")
+                except Exception as e:
+                    logger.error(f"❌ [SSE POST] Error sending success response: {e}", exc_info=True)
+                
+            except Exception as e:
+                logger.error(f"❌ [SSE POST] Fatal error in POST handler: {e}", exc_info=True)
+                await send_json_error(send, str(e), 500)
+        
+        else:
+            # Unknown method
+            logger.warning(f"⚠️ [SSE] Unknown method: {method}")
+            await send_json_error(send, f"Method {method} not allowed", 405)
+            
+    except Exception as e:
+        # Catch-all for any unhandled errors
+        logger.error(f"❌ [SSE] Unhandled error in handle_sse: {e}", exc_info=True)
+        logger.error(f"❌ [SSE] Traceback: {traceback.format_exc()}")
         try:
-            is_authenticated = telegram_client._is_authenticated
+            await send_json_error(send, str(e), 500)
         except:
-            pass
-    
-    return Response(
-        content=f'{{"status":"healthy","server":"telegram-mcp","version":"1.0.0","authenticated":{str(is_authenticated).lower()}}}',
-        media_type="application/json",
+            logger.error(f"❌ [SSE] Failed to send final error response")
+
+
+# Global exception handler for Starlette
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global exception handler to ensure JSON responses for all errors."""
+    logger.error(f"❌ [GLOBAL] Uncaught exception: {exc}", exc_info=True)
+    logger.error(f"❌ [GLOBAL] Traceback: {traceback.format_exc()}")
+    return JSONResponse(
+        content={
+            "status": "error",
+            "message": str(exc),
+            "type": "uncaught_exception",
+            "traceback": traceback.format_exc() if os.getenv("DEBUG") else None
+        },
+        status_code=500,
         headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -542,105 +756,8 @@ async def health_check(request):
         }
     )
 
-# Create SSE transport
-sse = SseServerTransport("/messages")
 
-
-# SSE endpoint handlers using proper ASGI pattern
-async def handle_sse(scope, receive, send):
-    """
-    Handle SSE requests as a raw ASGI application.
-    Let SseServerTransport handle the entire ASGI conversation directly.
-    """
-    method = scope["method"]
-    logger.info(f"🔵 [SSE {method}] Received {method} request to /sse endpoint")
-    logger.info(f"🔵 [SSE {method}] Request path: {scope['path']}")
-    
-    if method == "OPTIONS":
-        # Handle CORS preflight
-        logger.info(f"🟣 [OPTIONS] Handling CORS preflight")
-        await send({
-            "type": "http.response.start",
-            "status": 200,
-            "headers": [
-                [b"access-control-allow-origin", b"*"],
-                [b"access-control-allow-methods", b"GET, POST, OPTIONS"],
-                [b"access-control-allow-headers", b"*"],
-                [b"access-control-max-age", b"86400"],
-            ],
-        })
-        await send({
-            "type": "http.response.body",
-            "body": b"",
-        })
-        return
-    
-    if method == "GET":
-        # Handle SSE connection - let the transport control the entire response
-        logger.info(f"📡 [SSE GET] Setting up SSE connection")
-        
-        try:
-            logger.info(f"✅ [SSE GET] Delegating to SseServerTransport")
-            # Let SseServerTransport handle the entire ASGI conversation
-            async with sse.connect_sse(scope, receive, send) as (read, write):
-                logger.info(f"✅ [SSE GET] SSE connection established, running MCP app")
-                await app.run(read, write, app.create_initialization_options())
-            logger.info(f"✅ [SSE GET] MCP app finished, connection closed")
-        except Exception as e:
-            logger.error(f"❌ [SSE GET] Error in SSE connection: {e}", exc_info=True)
-            # Don't try to send a response - the transport already handled it or the connection is broken
-    
-    elif method == "POST":
-        # Handle POST messages through the SSE transport
-        logger.info(f"🟢 [SSE POST] Handling POST request")
-        
-        try:
-            # Let the transport handle the MCP message processing
-            async with sse.connect_sse(scope, receive, send) as (read, write):
-                logger.info(f"✅ [SSE POST] Processing MCP message")
-                await app.run(read, write, app.create_initialization_options())
-            
-            # After MCP processing is complete, send a simple success response
-            logger.info(f"✅ [SSE POST] POST handled successfully, sending response")
-            await send({
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [
-                    [b"content-type", b"application/json"],
-                    [b"access-control-allow-origin", b"*"],
-                    [b"access-control-allow-methods", b"GET, POST, OPTIONS"],
-                    [b"access-control-allow-headers", b"*"],
-                ],
-            })
-            await send({
-                "type": "http.response.body",
-                "body": b'{"status":"ok"}',
-            })
-        except Exception as e:
-            logger.error(f"❌ [SSE POST] Error handling POST: {e}", exc_info=True)
-            # Send error response
-            try:
-                await send({
-                    "type": "http.response.start",
-                    "status": 500,
-                    "headers": [
-                        [b"content-type", b"application/json"],
-                        [b"access-control-allow-origin", b"*"],
-                        [b"access-control-allow-methods", b"GET, POST, OPTIONS"],
-                        [b"access-control-allow-headers", b"*"],
-                    ],
-                })
-                error_body = f'{{"status":"error","message":"{str(e)}"}}'.encode()
-                await send({
-                    "type": "http.response.body",
-                    "body": error_body,
-                })
-            except:
-                # Connection might already be broken
-                logger.error(f"❌ [SSE POST] Could not send error response")
-
-
-# Create Starlette app with proper SSE routes and CORS middleware
+# Create Starlette app with proper SSE routes, CORS middleware, and exception handling
 starlette_app = Starlette(
     debug=True,
     routes=[
@@ -655,7 +772,10 @@ starlette_app = Starlette(
             allow_methods=["*"],
             allow_headers=["*"],
         )
-    ]
+    ],
+    exception_handlers={
+        Exception: global_exception_handler
+    }
 )
 
 
@@ -681,7 +801,7 @@ def run_sse_server():
     logger.info("🌐 Server will be available at http://0.0.0.0:8080")
     logger.info("🔌 MCP SSE endpoint: http://0.0.0.0:8080/sse")
     logger.info("❤️ Health check: http://0.0.0.0:8080/health")
-    logger.info("✅ Server configured with proper CORS headers and ASGI pattern")
+    logger.info("✅ Server configured with comprehensive error handling and JSON responses")
     
     uvicorn.run(
         starlette_app,
