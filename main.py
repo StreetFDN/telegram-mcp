@@ -1,6 +1,7 @@
 """
 Telegram MCP Server using Telethon for user authentication.
 Provides tools for listing chats, getting messages, and sending messages.
+Supports both stdio (MCP) and HTTP (FastAPI) interfaces.
 """
 
 import os
@@ -21,6 +22,12 @@ from telethon.errors import (
     FloodWaitError
 )
 from telegram_client import TelegramUserClient
+
+# FastAPI imports
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import uvicorn
 
 # Configure logging
 logging.basicConfig(
@@ -150,37 +157,37 @@ async def authenticate(
                 logger.info(f"✅ [AUTHENTICATE] Code sent successfully to {phone_number}")
                 
                 return (
-                    f"✅ **Code Sent Successfully**\n\n"
-                    f"📱 A verification code has been sent to **{phone_number}**\n\n"
-                    f"**Next Step:**\n"
-                    f"Call authenticate again with both phone_number and verification_code:\n"
-                    f'```\n{{"phone_number": "{phone_number}", "verification_code": "YOUR_CODE"}}\n```\n\n'
+                    f"✅ **Code Sent Successfully**\\n\\n"
+                    f"📱 A verification code has been sent to **{phone_number}**\\n\\n"
+                    f"**Next Step:**\\n"
+                    f"Call authenticate again with both phone_number and verification_code:\\n"
+                    f'```\\n{{\"phone_number\": \"{phone_number}\", \"verification_code\": \"YOUR_CODE\"}}\\n```\\n\\n'
                     f"💡 The code is usually 5 digits and arrives within seconds."
                 )
                 
             except ApiIdInvalidError as e:
                 logger.error(f"❌ [AUTHENTICATE] Invalid API credentials: {e}")
                 return (
-                    f"❌ **Invalid API Credentials**\n\n"
-                    f"The TELEGRAM_API_ID or TELEGRAM_API_HASH environment variables are invalid.\n"
-                    f"Please check your Telegram API credentials at https://my.telegram.org/apps\n\n"
+                    f"❌ **Invalid API Credentials**\\n\\n"
+                    f"The TELEGRAM_API_ID or TELEGRAM_API_HASH environment variables are invalid.\\n"
+                    f"Please check your Telegram API credentials at https://my.telegram.org/apps\\n\\n"
                     f"Error: {str(e)}"
                 )
                 
             except PhoneNumberInvalidError as e:
                 logger.error(f"❌ [AUTHENTICATE] Invalid phone number: {e}")
                 return (
-                    f"❌ **Invalid Phone Number**\n\n"
-                    f"The phone number **{phone_number}** is not valid.\n"
-                    f"Please use international format (e.g., +1234567890)\n\n"
+                    f"❌ **Invalid Phone Number**\\n\\n"
+                    f"The phone number **{phone_number}** is not valid.\\n"
+                    f"Please use international format (e.g., +1234567890)\\n\\n"
                     f"Error: {str(e)}"
                 )
                 
             except FloodWaitError as e:
                 logger.error(f"❌ [AUTHENTICATE] Rate limited: {e}")
                 return (
-                    f"❌ **Rate Limited**\n\n"
-                    f"Too many attempts. Please wait {e.seconds} seconds before trying again.\n\n"
+                    f"❌ **Rate Limited**\\n\\n"
+                    f"Too many attempts. Please wait {e.seconds} seconds before trying again.\\n\\n"
                     f"Error: {str(e)}"
                 )
         
@@ -209,17 +216,17 @@ async def authenticate(
                     logger.info(f"💾 [AUTHENTICATE] Session string generated (length: {len(session_string)})")
                     
                     return (
-                        f"✅ **Authentication Successful!**\n\n"
-                        f"👤 **User Information:**\n"
-                        f"   • Name: {me.first_name} {me.last_name or ''}\n"
-                        f"   • Username: @{me.username or 'N/A'}\n"
-                        f"   • Phone: {me.phone or 'N/A'}\n"
-                        f"   • User ID: {me.id}\n\n"
-                        f"🎉 You can now use other Telegram tools!\n\n"
-                        f"💾 **Save this session string** to avoid re-authenticating:\n"
-                        f"```\n"
-                        f"TELEGRAM_SESSION={session_string}\n"
-                        f"```\n\n"
+                        f"✅ **Authentication Successful!**\\n\\n"
+                        f"👤 **User Information:**\\n"
+                        f"   • Name: {me.first_name} {me.last_name or ''}\\n"
+                        f"   • Username: @{me.username or 'N/A'}\\n"
+                        f"   • Phone: {me.phone or 'N/A'}\\n"
+                        f"   • User ID: {me.id}\\n\\n"
+                        f"🎉 You can now use other Telegram tools!\\n\\n"
+                        f"💾 **Save this session string** to avoid re-authenticating:\\n"
+                        f"```\\n"
+                        f"TELEGRAM_SESSION={session_string}\\n"
+                        f"```\\n\\n"
                         f"Add this to your environment variables for persistent authentication."
                     )
                     
@@ -230,11 +237,11 @@ async def authenticate(
                     if not two_factor_password:
                         logger.info(f"⚠️ [AUTHENTICATE] Password not provided, requesting from user")
                         return (
-                            f"🔐 **Two-Factor Authentication Required**\n\n"
-                            f"Your account has 2FA enabled. Please provide your password.\n\n"
-                            f"**Next Step:**\n"
-                            f"Call authenticate again with all three parameters:\n"
-                            f'```\n{{"phone_number": "{phone_number}", "verification_code": "{verification_code}", "two_factor_password": "YOUR_PASSWORD"}}\n```\n\n'
+                            f"🔐 **Two-Factor Authentication Required**\\n\\n"
+                            f"Your account has 2FA enabled. Please provide your password.\\n\\n"
+                            f"**Next Step:**\\n"
+                            f"Call authenticate again with all three parameters:\\n"
+                            f'```\\n{{\"phone_number\": \"{phone_number}\", \"verification_code\": \"{verification_code}\", \"two_factor_password\": \"YOUR_PASSWORD\"}}\\n```\\n\\n'
                             f"💡 This is the password you set in Telegram Settings > Privacy and Security > Two-Step Verification"
                         )
                     
@@ -255,71 +262,71 @@ async def authenticate(
                         logger.info(f"💾 [AUTHENTICATE] Session string generated (length: {len(session_string)})")
                         
                         return (
-                            f"✅ **Authentication Successful! (2FA)**\n\n"
-                            f"👤 **User Information:**\n"
-                            f"   • Name: {me.first_name} {me.last_name or ''}\n"
-                            f"   • Username: @{me.username or 'N/A'}\n"
-                            f"   • Phone: {me.phone or 'N/A'}\n"
-                            f"   • User ID: {me.id}\n\n"
-                            f"🎉 You can now use other Telegram tools!\n\n"
-                            f"💾 **Save this session string** to avoid re-authenticating:\n"
-                            f"```\n"
-                            f"TELEGRAM_SESSION={session_string}\n"
-                            f"```\n\n"
+                            f"✅ **Authentication Successful! (2FA)**\\n\\n"
+                            f"👤 **User Information:**\\n"
+                            f"   • Name: {me.first_name} {me.last_name or ''}\\n"
+                            f"   • Username: @{me.username or 'N/A'}\\n"
+                            f"   • Phone: {me.phone or 'N/A'}\\n"
+                            f"   • User ID: {me.id}\\n\\n"
+                            f"🎉 You can now use other Telegram tools!\\n\\n"
+                            f"💾 **Save this session string** to avoid re-authenticating:\\n"
+                            f"```\\n"
+                            f"TELEGRAM_SESSION={session_string}\\n"
+                            f"```\\n\\n"
                             f"Add this to your environment variables for persistent authentication."
                         )
                         
                     except PasswordHashInvalidError as e:
                         logger.error(f"❌ [AUTHENTICATE] Invalid 2FA password: {e}")
                         return (
-                            f"❌ **Invalid Password**\n\n"
-                            f"The two-factor authentication password is incorrect.\n"
-                            f"Please try again with the correct password.\n\n"
+                            f"❌ **Invalid Password**\\n\\n"
+                            f"The two-factor authentication password is incorrect.\\n"
+                            f"Please try again with the correct password.\\n\\n"
                             f"Error: {str(e)}"
                         )
                 
             except PhoneCodeInvalidError as e:
                 logger.error(f"❌ [AUTHENTICATE] Invalid verification code: {e}")
                 return (
-                    f"❌ **Invalid Verification Code**\n\n"
-                    f"The code **{verification_code}** is incorrect.\n"
-                    f"Please check the code and try again.\n\n"
+                    f"❌ **Invalid Verification Code**\\n\\n"
+                    f"The code **{verification_code}** is incorrect.\\n"
+                    f"Please check the code and try again.\\n\\n"
                     f"Error: {str(e)}"
                 )
                 
             except PhoneCodeExpiredError as e:
                 logger.error(f"❌ [AUTHENTICATE] Verification code expired: {e}")
                 return (
-                    f"❌ **Verification Code Expired**\n\n"
-                    f"The code has expired. Please request a new code by calling authenticate with just your phone_number.\n\n"
+                    f"❌ **Verification Code Expired**\\n\\n"
+                    f"The code has expired. Please request a new code by calling authenticate with just your phone_number.\\n\\n"
                     f"Error: {str(e)}"
                 )
                 
             except FloodWaitError as e:
                 logger.error(f"❌ [AUTHENTICATE] Rate limited: {e}")
                 return (
-                    f"❌ **Rate Limited**\n\n"
-                    f"Too many attempts. Please wait {e.seconds} seconds before trying again.\n\n"
+                    f"❌ **Rate Limited**\\n\\n"
+                    f"Too many attempts. Please wait {e.seconds} seconds before trying again.\\n\\n"
                     f"Error: {str(e)}"
                 )
         
         else:
             logger.warning(f"⚠️ [AUTHENTICATE] Invalid parameters provided")
             return (
-                f"⚠️ **Invalid Parameters**\n\n"
-                f"Please provide at least a phone_number to start authentication.\n\n"
-                f"**Usage:**\n"
-                f"1. Send code: `{{\"phone_number\": \"+1234567890\"}}`\n"
-                f"2. Verify: `{{\"phone_number\": \"+1234567890\", \"verification_code\": \"12345\"}}`\n"
-                f"3. 2FA (if needed): `{{\"phone_number\": \"+1234567890\", \"verification_code\": \"12345\", \"two_factor_password\": \"password\"}}`"
+                f"⚠️ **Invalid Parameters**\\n\\n"
+                f"Please provide at least a phone_number to start authentication.\\n\\n"
+                f"**Usage:**\\n"
+                f"1. Send code: `{{\\\"phone_number\\\": \\\"+1234567890\\\"}}`\\n"
+                f"2. Verify: `{{\\\"phone_number\\\": \\\"+1234567890\\\", \\\"verification_code\\\": \\\"12345\\\"}}`\\n"
+                f"3. 2FA (if needed): `{{\\\"phone_number\\\": \\\"+1234567890\\\", \\\"verification_code\\\": \\\"12345\\\", \\\"two_factor_password\\\": \\\"password\\\"}}`"
             )
     
     except Exception as e:
         logger.error(f"❌ [AUTHENTICATE] Unexpected error: {e}", exc_info=True)
         return (
-            f"❌ **Authentication Error**\n\n"
-            f"An unexpected error occurred during authentication:\n"
-            f"```\n{str(e)}\n```\n\n"
+            f"❌ **Authentication Error**\\n\\n"
+            f"An unexpected error occurred during authentication:\\n"
+            f"```\\n{str(e)}\\n```\\n\\n"
             f"Please check the logs for more details."
         )
 
@@ -437,15 +444,15 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             limit = arguments.get("limit", 20)
             chats = await client.get_chats(limit=min(limit, 100))
             
-            response = f"📱 Found {len(chats)} chats:\n\n"
+            response = f"📱 Found {len(chats)} chats:\\n\\n"
             for chat in chats:
-                response += f"• {chat['name']} (ID: {chat['id']})\n"
-                response += f"  Type: {chat['type']}, Unread: {chat['unread_count']}\n"
+                response += f"• {chat['name']} (ID: {chat['id']})\\n"
+                response += f"  Type: {chat['type']}, Unread: {chat['unread_count']}\\n"
                 if chat['last_message']:
                     msg = chat['last_message']
                     text_preview = msg['text'][:50] + "..." if len(msg['text']) > 50 else msg['text']
-                    response += f"  Last: {text_preview}\n"
-                response += "\n"
+                    response += f"  Last: {text_preview}\\n"
+                response += "\\n"
             
             return [TextContent(type="text", text=response)]
         
@@ -460,14 +467,14 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 offset=offset
             )
             
-            response = f"💬 Retrieved {len(messages)} messages from chat {chat_id}:\n\n"
+            response = f"💬 Retrieved {len(messages)} messages from chat {chat_id}:\\n\\n"
             for msg in messages:
                 from_name = msg.get('from_name', 'Unknown')
-                response += f"[{msg['date']}] {from_name}:\n"
-                response += f"{msg['text']}\n"
+                response += f"[{msg['date']}] {from_name}:\\n"
+                response += f"{msg['text']}\\n"
                 if msg.get('media'):
-                    response += f"📎 Media: {msg['media']['type']}\n"
-                response += "\n"
+                    response += f"📎 Media: {msg['media']['type']}\\n"
+                response += "\\n"
             
             return [TextContent(type="text", text=response)]
         
@@ -483,9 +490,9 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             )
             
             response = (
-                f"✅ Message sent successfully!\n\n"
-                f"Message ID: {result['id']}\n"
-                f"Chat ID: {result['chat_id']}\n"
+                f"✅ Message sent successfully!\\n\\n"
+                f"Message ID: {result['id']}\\n"
+                f"Chat ID: {result['chat_id']}\\n"
                 f"Date: {result['date']}"
             )
             
@@ -505,9 +512,128 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         )]
 
 
-async def main():
-    """Main entry point for the MCP server."""
-    logger.info("Starting Telegram MCP Server with Telethon...")
+# =============================================================================
+# FastAPI Web Server Setup
+# =============================================================================
+
+# Create FastAPI app
+fastapi_app = FastAPI(
+    title="Telegram MCP Server",
+    description="HTTP interface for Telegram MCP Server",
+    version="1.0.0"
+)
+
+# Add CORS middleware for web access
+fastapi_app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for maximum compatibility
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all headers
+)
+
+# Pydantic models for request/response
+class ToolCallRequest(BaseModel):
+    name: str
+    arguments: Dict[str, Any] = {}
+
+class ToolCallResponse(BaseModel):
+    success: bool
+    result: Optional[str] = None
+    error: Optional[str] = None
+
+class HealthResponse(BaseModel):
+    status: str
+    server: str
+    version: str
+    authenticated: bool
+
+# Health check endpoint
+@fastapi_app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Health check endpoint that returns server status."""
+    global telegram_client
+    
+    is_authenticated = False
+    if telegram_client is not None:
+        try:
+            is_authenticated = telegram_client._is_authenticated
+        except:
+            pass
+    
+    return HealthResponse(
+        status="healthy",
+        server="telegram-mcp",
+        version="1.0.0",
+        authenticated=is_authenticated
+    )
+
+# List available tools endpoint
+@fastapi_app.get("/api/tools")
+async def http_list_tools():
+    """List all available MCP tools via HTTP."""
+    try:
+        tools = await list_tools()
+        return {
+            "success": True,
+            "tools": [
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "inputSchema": tool.inputSchema
+                }
+                for tool in tools
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Error listing tools: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Call tool endpoint
+@fastapi_app.post("/api/call_tool", response_model=ToolCallResponse)
+async def http_call_tool(request: ToolCallRequest):
+    """Execute an MCP tool via HTTP."""
+    try:
+        logger.info(f"HTTP call_tool: {request.name} with args: {request.arguments}")
+        
+        # Call the MCP tool
+        result = await call_tool(request.name, request.arguments)
+        
+        # Extract text from result
+        result_text = ""
+        if result and len(result) > 0:
+            result_text = result[0].text
+        
+        return ToolCallResponse(
+            success=True,
+            result=result_text
+        )
+    except Exception as e:
+        logger.error(f"Error calling tool {request.name}: {e}", exc_info=True)
+        return ToolCallResponse(
+            success=False,
+            error=str(e)
+        )
+
+# Root endpoint
+@fastapi_app.get("/")
+async def root():
+    """Root endpoint with API information."""
+    return {
+        "name": "Telegram MCP Server",
+        "version": "1.0.0",
+        "endpoints": {
+            "health": "/health",
+            "list_tools": "/api/tools",
+            "call_tool": "/api/call_tool"
+        },
+        "documentation": "/docs"
+    }
+
+
+async def run_stdio_server():
+    """Run the MCP stdio server."""
+    logger.info("Starting Telegram MCP Server with stdio interface...")
     logger.info(f"API ID: {API_ID}")
     logger.info(f"Session available: {bool(TELEGRAM_SESSION)}")
     
@@ -519,5 +645,30 @@ async def main():
         )
 
 
+def run_web_server():
+    """Run the FastAPI web server."""
+    logger.info("Starting Telegram MCP Server with HTTP interface...")
+    logger.info(f"API ID: {API_ID}")
+    logger.info(f"Session available: {bool(TELEGRAM_SESSION)}")
+    logger.info("Server will be available at http://0.0.0.0:8080")
+    logger.info("API endpoints at http://0.0.0.0:8080/api")
+    
+    uvicorn.run(
+        fastapi_app,
+        host="0.0.0.0",
+        port=8080,
+        log_level="info"
+    )
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Check if we should run in web mode or stdio mode
+    # Default to web mode when run directly
+    mode = os.getenv("MCP_MODE", "web").lower()
+    
+    if mode == "stdio":
+        # Run stdio server for MCP protocol
+        asyncio.run(run_stdio_server())
+    else:
+        # Run web server (default)
+        run_web_server()
