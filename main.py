@@ -26,8 +26,9 @@ from telegram_client import TelegramUserClient
 # Import for SSE server
 from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
-from starlette.routing import Route, Mount
+from starlette.routing import Route
 from starlette.responses import Response
+from starlette.requests import Request
 import uvicorn
 
 # Configure logging
@@ -514,7 +515,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 
 
 # =============================================================================
-# MCP SSE Server Setup (Standard Pattern)
+# MCP SSE Server Setup (Correct Pattern)
 # =============================================================================
 
 # Health check endpoint
@@ -534,15 +535,27 @@ async def health_check(request):
         media_type="application/json"
     )
 
-# Create SSE transport with the required endpoint argument
+# Create SSE transport
 sse = SseServerTransport("/messages")
 
-# Create Starlette app with proper SSE mounting
+# SSE endpoint handlers using the correct methods
+async def handle_sse_endpoint(request: Request):
+    """Handle SSE GET requests for establishing SSE connections."""
+    async with sse.connect_sse(app.create_initialization_options()) as streams:
+        return await sse.handle_sse(request, streams[0], streams[1])
+
+async def handle_post_endpoint(request: Request):
+    """Handle POST requests for sending MCP messages."""
+    async with sse.connect_sse(app.create_initialization_options()) as streams:
+        return await sse.handle_post_message(request, streams[0], streams[1])
+
+# Create Starlette app with proper SSE routes
 starlette_app = Starlette(
     debug=True,
     routes=[
         Route("/health", health_check, methods=["GET"]),
-        Mount("/sse", app=sse.get_asgi_app()),
+        Route("/sse", handle_sse_endpoint, methods=["GET"]),
+        Route("/sse", handle_post_endpoint, methods=["POST"]),
     ],
 )
 
@@ -569,22 +582,6 @@ def run_sse_server():
     logger.info("Server will be available at http://0.0.0.0:8080")
     logger.info("MCP SSE endpoint: http://0.0.0.0:8080/sse")
     logger.info("Health check: http://0.0.0.0:8080/health")
-    
-    # Connect the MCP app to the SSE transport
-    async def lifespan(app_instance):
-        """Lifespan context manager for the server."""
-        async with sse.connect_sse(
-            server_params=app.create_initialization_options()
-        ) as streams:
-            async with asyncio.TaskGroup() as tg:
-                tg.create_task(app.run(
-                    streams[0],
-                    streams[1],
-                    app.create_initialization_options()
-                ))
-                yield
-    
-    starlette_app.router.lifespan_context = lifespan
     
     uvicorn.run(
         starlette_app,
