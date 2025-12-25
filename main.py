@@ -1,7 +1,7 @@
 """
 Telegram MCP Server using Telethon for user authentication.
 Provides tools for listing chats, getting messages, and sending messages.
-Supports both stdio (MCP) and HTTP (FastAPI) interfaces.
+Supports both stdio (MCP) and SSE (HTTP) interfaces.
 """
 
 import os
@@ -23,10 +23,11 @@ from telethon.errors import (
 )
 from telegram_client import TelegramUserClient
 
-# FastAPI imports
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+# Import for SSE server
+from mcp.server.sse import SseServerTransport
+from starlette.applications import Starlette
+from starlette.routing import Route
+from starlette.responses import Response
 import uvicorn
 
 # Configure logging
@@ -513,44 +514,11 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 
 
 # =============================================================================
-# FastAPI Web Server Setup
+# MCP SSE Server Setup (Standard Pattern)
 # =============================================================================
 
-# Create FastAPI app
-fastapi_app = FastAPI(
-    title="Telegram MCP Server",
-    description="HTTP interface for Telegram MCP Server",
-    version="1.0.0"
-)
-
-# Add CORS middleware for web access
-fastapi_app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for maximum compatibility
-    allow_credentials=True,
-    allow_methods=["*"],  # Allow all HTTP methods
-    allow_headers=["*"],  # Allow all headers
-)
-
-# Pydantic models for request/response
-class ToolCallRequest(BaseModel):
-    name: str
-    arguments: Dict[str, Any] = {}
-
-class ToolCallResponse(BaseModel):
-    success: bool
-    result: Optional[str] = None
-    error: Optional[str] = None
-
-class HealthResponse(BaseModel):
-    status: str
-    server: str
-    version: str
-    authenticated: bool
-
 # Health check endpoint
-@fastapi_app.get("/health", response_model=HealthResponse)
-async def health_check():
+async def health_check(request):
     """Health check endpoint that returns server status."""
     global telegram_client
     
@@ -561,74 +529,30 @@ async def health_check():
         except:
             pass
     
-    return HealthResponse(
-        status="healthy",
-        server="telegram-mcp",
-        version="1.0.0",
-        authenticated=is_authenticated
+    return Response(
+        content=f'{{"status":"healthy","server":"telegram-mcp","version":"1.0.0","authenticated":{str(is_authenticated).lower()}}}',
+        media_type="application/json"
     )
 
-# List available tools endpoint
-@fastapi_app.get("/api/tools")
-async def http_list_tools():
-    """List all available MCP tools via HTTP."""
-    try:
-        tools = await list_tools()
-        return {
-            "success": True,
-            "tools": [
-                {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "inputSchema": tool.inputSchema
-                }
-                for tool in tools
-            ]
-        }
-    except Exception as e:
-        logger.error(f"Error listing tools: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Call tool endpoint
-@fastapi_app.post("/api/call_tool", response_model=ToolCallResponse)
-async def http_call_tool(request: ToolCallRequest):
-    """Execute an MCP tool via HTTP."""
-    try:
-        logger.info(f"HTTP call_tool: {request.name} with args: {request.arguments}")
-        
-        # Call the MCP tool
-        result = await call_tool(request.name, request.arguments)
-        
-        # Extract text from result
-        result_text = ""
-        if result and len(result) > 0:
-            result_text = result[0].text
-        
-        return ToolCallResponse(
-            success=True,
-            result=result_text
+# SSE endpoint handler
+async def handle_sse(request):
+    """Handle SSE connections for MCP."""
+    async with SseServerTransport("/messages") as transport:
+        await app.run(
+            transport.read_stream,
+            transport.write_stream,
+            app.create_initialization_options()
         )
-    except Exception as e:
-        logger.error(f"Error calling tool {request.name}: {e}", exc_info=True)
-        return ToolCallResponse(
-            success=False,
-            error=str(e)
-        )
+    return Response()
 
-# Root endpoint
-@fastapi_app.get("/")
-async def root():
-    """Root endpoint with API information."""
-    return {
-        "name": "Telegram MCP Server",
-        "version": "1.0.0",
-        "endpoints": {
-            "health": "/health",
-            "list_tools": "/api/tools",
-            "call_tool": "/api/call_tool"
-        },
-        "documentation": "/docs"
-    }
+# Create Starlette app with SSE endpoint
+starlette_app = Starlette(
+    debug=True,
+    routes=[
+        Route("/health", health_check, methods=["GET"]),
+        Route("/sse", handle_sse, methods=["GET", "POST"]),
+    ],
+)
 
 
 async def run_stdio_server():
@@ -645,16 +569,17 @@ async def run_stdio_server():
         )
 
 
-def run_web_server():
-    """Run the FastAPI web server."""
-    logger.info("Starting Telegram MCP Server with HTTP interface...")
+def run_sse_server():
+    """Run the MCP SSE server."""
+    logger.info("Starting Telegram MCP Server with SSE interface...")
     logger.info(f"API ID: {API_ID}")
     logger.info(f"Session available: {bool(TELEGRAM_SESSION)}")
     logger.info("Server will be available at http://0.0.0.0:8080")
-    logger.info("API endpoints at http://0.0.0.0:8080/api")
+    logger.info("MCP SSE endpoint: http://0.0.0.0:8080/sse")
+    logger.info("Health check: http://0.0.0.0:8080/health")
     
     uvicorn.run(
-        fastapi_app,
+        starlette_app,
         host="0.0.0.0",
         port=8080,
         log_level="info"
@@ -662,13 +587,13 @@ def run_web_server():
 
 
 if __name__ == "__main__":
-    # Check if we should run in web mode or stdio mode
-    # Default to web mode when run directly
-    mode = os.getenv("MCP_MODE", "web").lower()
+    # Check if we should run in SSE mode or stdio mode
+    # Default to SSE mode when run directly
+    mode = os.getenv("MCP_MODE", "sse").lower()
     
     if mode == "stdio":
         # Run stdio server for MCP protocol
         asyncio.run(run_stdio_server())
     else:
-        # Run web server (default)
-        run_web_server()
+        # Run SSE server (default)
+        run_sse_server()
